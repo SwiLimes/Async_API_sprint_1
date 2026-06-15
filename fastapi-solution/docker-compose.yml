@@ -1,0 +1,59 @@
+services:
+  elasticsearch:
+    image: elasticsearch:8.6.2
+    hostname: elasticsearch
+    container_name: elasticsearch
+    environment:
+      node.name: elasticsearch
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+    restart: unless-stopped
+    networks:
+      - movies
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200 >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - movies
+
+  api:
+    build: .
+    container_name: api-service
+    env_file: .env
+    environment:
+      REDIS_HOST: redis
+      ELASTIC_HOST: elasticsearch
+      ELASTIC_PORT: 9200
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - movies
+
+networks:
+  movies:
+    name: movies-network

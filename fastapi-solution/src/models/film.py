@@ -1,7 +1,9 @@
 # Используем pydantic для упрощения работы при перегонке данных из json в объекты
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from models.genre import Genre
 from models.person import PersonShort
+
 
 # Это потом добавим в индекс ES, пока не нужно
 # class FilmShort(BaseModel):
@@ -10,14 +12,17 @@ from models.person import PersonShort
 
 
 class Film(BaseModel):
-    id: str  # UUID из ES приходит строкой
+    id: str = Field(alias='uuid') # UUID из ES приходит строкой
     title: str
     description: str
     imdb_rating: float | None = None
-    genres: list[str] = []
+    genres: list[Genre] = Field(alias='genre')
     actors: list[PersonShort] = []
     directors: list[PersonShort] = []
     writers: list[PersonShort] = []
     actors_names: list[str] = []
     directors_names: list[str] = []
     writers_names: list[str] = []
+
+    class Config:
+        populate_by_name = True  # позволяет заполнять и по alias, и по имени поля

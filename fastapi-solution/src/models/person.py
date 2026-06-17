@@ -1,11 +1,17 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PersonShort(BaseModel):
-    id: str
+    id: str = Field(alias='uuid')
     name: str
+
+    class Config:
+        populate_by_name = True
 
 
 class Person(BaseModel):
-    id: str  # UUID из ES приходит строкой
+    id: str = Field(alias='uuid')  # UUID из ES приходит строкой
     full_name: str
+
+    class Config:
+        populate_by_name = True

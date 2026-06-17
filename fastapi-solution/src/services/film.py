@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Any, Dict
 
 from elasticsearch import AsyncElasticsearch, NotFoundError
 from fastapi import Depends
@@ -10,6 +10,34 @@ from db.redis import get_redis
 from models.film import Film
 
 FILM_CACHE_EXPIRE_IN_SECONDS = 60 * 5  # 5 минут
+
+
+def _build_search_query(
+        query: Optional[str],
+        genre_uuid: Optional[str],
+        sort: Optional[str],
+        page_size: int,
+        offset: int,
+) -> Dict:
+    body = {'from': offset, 'size': page_size}
+    must = []
+    if query:
+        must.append({'multi_match': {'query': query, 'fields': ['title^3', 'description']}})
+    if genre_uuid:
+        must.append({
+            'nested': {
+                'path': 'genre',
+                'query': {'term': {'genre.uuid': genre_uuid}}
+            }
+        })
+    body['query'] = {'bool': {'must': must}} if must else {'match_all': {}}
+    if sort:
+        sort_field = sort[1:] if sort.startswith('-') else sort
+        order = 'desc' if sort.startswith('-') else 'asc'
+        body['sort'] = [{sort_field: {'order': order}}]
+    else:
+        body['sort'] = [{'imdb_rating': {'order': 'desc'}}]
+    return body
 
 
 class FilmService:
@@ -31,6 +59,35 @@ class FilmService:
             await self._put_film_to_cache(film)
 
         return film
+
+    async def get_list(
+            self,
+            sort: Optional[str] = None,
+            genre_uuid: Optional[str] = None,
+            page_size: int = 50,
+            offset: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Получить список фильмов с фильтрацией по жанру и сортировкой.
+        Возвращает {'items': List[Film], 'total': int}
+        """
+        body = _build_search_query(query=None, genre_uuid=genre_uuid, sort=sort, page_size=page_size,
+                                        offset=offset)
+        return await self._execute_search(body)
+
+    async def search(
+            self,
+            query: str,
+            page_size: int = 50,
+            offset: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Поиск фильмов по тексту (название, описание)
+        Возвращает {'items': List[Film], 'total': int}
+        """
+        body = _build_search_query(query=query, genre_uuid=None, sort='-imdb_rating',
+                                        page_size=page_size, offset=offset)
+        return await self._execute_search(body)
 
     async def _get_film_from_elastic(self, film_id: str) -> Optional[Film]:
         try:
@@ -56,6 +113,14 @@ class FilmService:
         # https://redis.io/commands/set/
         # pydantic позволяет сериализовать модель в json
         await self.redis.set(film.id, film.json(), FILM_CACHE_EXPIRE_IN_SECONDS)
+
+    async def _execute_search(self, body: dict) -> dict:
+        """Выполнить поиск в ES и вернуть {items: List[Film], total: int}"""
+        response = await self.elastic.search(index="movies", body=body)
+        total = response["hits"]["total"]["value"]
+        hits = [hit["_source"] for hit in response["hits"]["hits"]]
+        items = [Film(**item) for item in hits]
+        return {"items": items, "total": total}
 
 
 @lru_cache()

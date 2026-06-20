@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 
 from elasticsearch import AsyncElasticsearch, NotFoundError
 from fastapi import Depends
@@ -8,8 +8,11 @@ from redis.asyncio import Redis
 from db.elastic import get_elastic
 from db.redis import get_redis
 from models.film import Film
+from services.cache import RedisCache
 
-FILM_CACHE_EXPIRE_IN_SECONDS = 60 * 5  # 5 минут
+FILM_DETAIL_PREFIX = 'film:detail'
+FILM_LIST_PREFIX = 'film:list'
+FILM_SEARCH_PREFIX = 'film:search'
 
 
 def _build_search_query(
@@ -40,23 +43,36 @@ def _build_search_query(
     return body
 
 
+def _serialize_search_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        'items': [film.model_dump(by_alias=True) for film in result['items']],
+        'total': result['total'],
+    }
+
+
+def _deserialize_search_result(data: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        'items': [Film(**item) for item in data['items']],
+        'total': data['total'],
+    }
+
+
 class FilmService:
     def __init__(self, redis: Redis, elastic: AsyncElasticsearch):
         self.redis = redis
         self.elastic = elastic
+        self._detail_cache = RedisCache(redis, FILM_DETAIL_PREFIX)
+        self._list_cache = RedisCache(redis, FILM_LIST_PREFIX)
+        self._search_cache = RedisCache(redis, FILM_SEARCH_PREFIX)
 
-    # get_by_id возвращает объект фильма. Он опционален, так как фильм может отсутствовать в базе
     async def get_by_id(self, film_id: str) -> Optional[Film]:
-        # Пытаемся получить данные из кеша, потому что оно работает быстрее
-        film = await self._film_from_cache(film_id)
+        cache_key = self._detail_cache.key(film_id=film_id)
+        film = await self._get_film_from_cache(cache_key)
         if not film:
-            # Если фильма нет в кеше, то ищем его в Elasticsearch
             film = await self._get_film_from_elastic(film_id)
             if not film:
-                # Если он отсутствует в Elasticsearch, значит, фильма вообще нет в базе
                 return None
-            # Сохраняем фильм в кеш
-            await self._put_film_to_cache(film)
+            await self._put_film_to_cache(cache_key, film)
 
         return film
 
@@ -67,13 +83,26 @@ class FilmService:
             page_size: int = 50,
             offset: int = 0,
     ) -> Dict[str, Any]:
-        """
-        Получить список фильмов с фильтрацией по жанру и сортировкой.
-        Возвращает {'items': List[Film], 'total': int}
-        """
-        body = _build_search_query(query=None, genre_uuid=genre_uuid, sort=sort, page_size=page_size,
-                                        offset=offset)
-        return await self._execute_search(body)
+        cache_key = self._list_cache.key(
+            sort=sort,
+            genre=genre_uuid,
+            page_size=page_size,
+            offset=offset,
+        )
+        cached = await self._list_cache.get_json(cache_key)
+        if cached is not None:
+            return _deserialize_search_result(cached)
+
+        body = _build_search_query(
+            query=None,
+            genre_uuid=genre_uuid,
+            sort=sort,
+            page_size=page_size,
+            offset=offset,
+        )
+        result = await self._execute_search(body)
+        await self._list_cache.set_json(cache_key, _serialize_search_result(result))
+        return result
 
     async def search(
             self,
@@ -81,13 +110,25 @@ class FilmService:
             page_size: int = 50,
             offset: int = 0,
     ) -> Dict[str, Any]:
-        """
-        Поиск фильмов по тексту (название, описание)
-        Возвращает {'items': List[Film], 'total': int}
-        """
-        body = _build_search_query(query=query, genre_uuid=None, sort='-imdb_rating',
-                                        page_size=page_size, offset=offset)
-        return await self._execute_search(body)
+        cache_key = self._search_cache.key(
+            query=query,
+            page_size=page_size,
+            offset=offset,
+        )
+        cached = await self._search_cache.get_json(cache_key)
+        if cached is not None:
+            return _deserialize_search_result(cached)
+
+        body = _build_search_query(
+            query=query,
+            genre_uuid=None,
+            sort='-imdb_rating',
+            page_size=page_size,
+            offset=offset,
+        )
+        result = await self._execute_search(body)
+        await self._search_cache.set_json(cache_key, _serialize_search_result(result))
+        return result
 
     async def _get_film_from_elastic(self, film_id: str) -> Optional[Film]:
         try:
@@ -96,31 +137,21 @@ class FilmService:
             return None
         return Film(**doc['_source'])
 
-    async def _film_from_cache(self, film_id: str) -> Optional[Film]:
-        # Пытаемся получить данные о фильме из кеша, используя команду get
-        # https://redis.io/commands/get/
-        data = await self.redis.get(film_id)
+    async def _get_film_from_cache(self, cache_key: str) -> Optional[Film]:
+        data = await self._detail_cache.get_json(cache_key)
         if not data:
             return None
+        return Film(**data)
 
-        # pydantic предоставляет удобное API для создания объекта моделей из json
-        film = Film.parse_raw(data)
-        return film
-
-    async def _put_film_to_cache(self, film: Film):
-        # Сохраняем данные о фильме, используя команду set
-        # Выставляем время жизни кеша — 5 минут
-        # https://redis.io/commands/set/
-        # pydantic позволяет сериализовать модель в json
-        await self.redis.set(film.id, film.json(), FILM_CACHE_EXPIRE_IN_SECONDS)
+    async def _put_film_to_cache(self, cache_key: str, film: Film) -> None:
+        await self._detail_cache.set_json(cache_key, film.model_dump(by_alias=True))
 
     async def _execute_search(self, body: dict) -> dict:
-        """Выполнить поиск в ES и вернуть {items: List[Film], total: int}"""
-        response = await self.elastic.search(index="movies", body=body)
-        total = response["hits"]["total"]["value"]
-        hits = [hit["_source"] for hit in response["hits"]["hits"]]
+        response = await self.elastic.search(index='movies', body=body)
+        total = response['hits']['total']['value']
+        hits: List[dict] = [hit['_source'] for hit in response['hits']['hits']]
         items = [Film(**item) for item in hits]
-        return {"items": items, "total": total}
+        return {'items': items, 'total': total}
 
 
 @lru_cache()

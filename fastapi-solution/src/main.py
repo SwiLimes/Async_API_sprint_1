@@ -4,8 +4,10 @@ from fastapi.responses import ORJSONResponse
 from redis.asyncio import Redis
 
 from api.v1 import films, genres, persons
+import asyncio
 from core import config
 from db import elastic, redis
+from etl.etl_operations import etl_process
 
 app = FastAPI(
     title=config.PROJECT_NAME,
@@ -21,6 +23,8 @@ async def startup():
     elastic.es = AsyncElasticsearch(
         hosts=[f'http://{config.ELASTIC_HOST}:{config.ELASTIC_PORT}']
     )
+    # ETL entry point
+    await etl_process(redis.redis, elastic.es)
 
 
 @app.on_event('shutdown')

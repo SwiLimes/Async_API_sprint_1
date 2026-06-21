@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse
 from redis.asyncio import Redis
 
-from api.v1 import films
+from api.v1 import films, genres, persons
 import asyncio
 from core import config
 from db import elastic, redis
@@ -21,8 +21,8 @@ app = FastAPI(
 async def startup():
     redis.redis = Redis(host=config.REDIS_HOST, port=config.REDIS_PORT)
     elastic.es = AsyncElasticsearch(
-    hosts=[f'http://{config.ELASTIC_HOST}:{config.ELASTIC_PORT}']
-)
+        hosts=[f'http://{config.ELASTIC_HOST}:{config.ELASTIC_PORT}']
+    )
     # ETL entry point
     await etl_process(redis.redis, elastic.es)
 
@@ -33,6 +33,7 @@ async def shutdown():
     await elastic.es.close()
 
 
-# Подключаем роутер к серверу, указав префикс /v1/films
-# Теги указываем для удобства навигации по документации
+# Подключаем роутеры к серверу, теги нужны для удобной навигации в документации.
 app.include_router(films.router, prefix='/api/v1/films', tags=['films'])
+app.include_router(genres.router, prefix='/api/v1/genres', tags=['genres'])
+app.include_router(persons.router, prefix='/api/v1/persons', tags=['persons'])

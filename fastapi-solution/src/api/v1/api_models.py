@@ -1,7 +1,7 @@
 from typing import Optional, List
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class GenreShort(BaseModel):
@@ -30,6 +30,31 @@ class FilmDetail(FilmShort):
 
 class FilmListResponse(BaseModel):
     items: List[FilmShort]
+    total: int
+    page_number: int
+    page_size: int
+
+
+class GenreDetail(GenreShort):
+    description: Optional[str] = None
+
+
+class GenreListResponse(BaseModel):
+    items: List[GenreDetail]
+    total: int
+    page_number: int
+    page_size: int
+
+
+class PersonDetail(BaseModel):
+    uuid: UUID
+    full_name: str
+    roles: List[str] = Field(default_factory=list)
+    film_ids: List[UUID] = Field(default_factory=list)
+
+
+class PersonListResponse(BaseModel):
+    items: List[PersonDetail]
     total: int
     page_number: int
     page_size: int

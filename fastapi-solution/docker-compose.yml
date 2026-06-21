@@ -35,6 +35,19 @@ services:
     networks:
       - movies
 
+  theatre-db:
+    image: postgres:16
+    container_name: postgres-db
+    env_file:
+      - ./.env
+    networks:
+      - movies
+    volumes:
+      - ./database_dump.sql:/docker-entrypoint-initdb.d/init.sql
+      - theatre-db-data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+
   api:
     build: .
     container_name: api-service
@@ -53,6 +66,11 @@ services:
     restart: unless-stopped
     networks:
       - movies
+    volumes:
+      - ./src/etl/state:/opt/etl/state
+
+volumes:
+  theatre-db-data:
 
 networks:
   movies:

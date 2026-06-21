@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from typing import Optional, Any, Dict
 
@@ -67,13 +68,21 @@ class FilmService:
             page_size: int = 50,
             offset: int = 0,
     ) -> Dict[str, Any]:
-        """
-        Получить список фильмов с фильтрацией по жанру и сортировкой.
-        Возвращает {'items': List[Film], 'total': int}
-        """
-        body = _build_search_query(query=None, genre_uuid=genre_uuid, sort=sort, page_size=page_size,
-                                        offset=offset)
-        return await self._execute_search(body)
+        cache_key = f'films:list:{sort}:{genre_uuid}:{page_size}:{offset}'
+        cached = await self._search_result_from_cache(cache_key)
+        if cached is not None:
+            return cached
+
+        body = _build_search_query(
+            query=None,
+            genre_uuid=genre_uuid,
+            sort=sort,
+            page_size=page_size,
+            offset=offset,
+        )
+        result = await self._execute_search(body)
+        await self._put_search_result_to_cache(cache_key, result)
+        return result
 
     async def search(
             self,
@@ -81,13 +90,21 @@ class FilmService:
             page_size: int = 50,
             offset: int = 0,
     ) -> Dict[str, Any]:
-        """
-        Поиск фильмов по тексту (название, описание)
-        Возвращает {'items': List[Film], 'total': int}
-        """
-        body = _build_search_query(query=query, genre_uuid=None, sort='-imdb_rating',
-                                        page_size=page_size, offset=offset)
-        return await self._execute_search(body)
+        cache_key = f'films:search:{query}:{page_size}:{offset}'
+        cached = await self._search_result_from_cache(cache_key)
+        if cached is not None:
+            return cached
+
+        body = _build_search_query(
+            query=query,
+            genre_uuid=None,
+            sort='-imdb_rating',
+            page_size=page_size,
+            offset=offset,
+        )
+        result = await self._execute_search(body)
+        await self._put_search_result_to_cache(cache_key, result)
+        return result
 
     async def _get_film_from_elastic(self, film_id: str) -> Optional[Film]:
         try:
@@ -108,11 +125,27 @@ class FilmService:
         return film
 
     async def _put_film_to_cache(self, film: Film):
-        # Сохраняем данные о фильме, используя команду set
-        # Выставляем время жизни кеша — 5 минут
-        # https://redis.io/commands/set/
-        # pydantic позволяет сериализовать модель в json
-        await self.redis.set(film.id, film.json(), FILM_CACHE_EXPIRE_IN_SECONDS)
+        await self.redis.set(film.id, film.json(), ex=FILM_CACHE_EXPIRE_IN_SECONDS)
+
+    async def _search_result_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        data = await self.redis.get(cache_key)
+        if not data:
+            return None
+
+        parsed = json.loads(data)
+        return {
+            'items': [Film(**item) for item in parsed['items']],
+            'total': parsed['total'],
+        }
+
+    async def _put_search_result_to_cache(self, cache_key: str, result: Dict[str, Any]) -> None:
+        if result['total'] == 0:
+            return
+        payload = {
+            'items': [film.dict(by_alias=True) for film in result['items']],
+            'total': result['total'],
+        }
+        await self.redis.set(cache_key, json.dumps(payload), ex=FILM_CACHE_EXPIRE_IN_SECONDS)
 
     async def _execute_search(self, body: dict) -> dict:
         """Выполнить поиск в ES и вернуть {items: List[Film], total: int}"""

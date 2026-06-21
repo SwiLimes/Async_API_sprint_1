@@ -25,10 +25,11 @@ class PostgresDBOperator:
         for idx in active_indices:
             last_checked_ts_ = self.state.get_state(state_attr_name_in_json[idx])
 
-            if not last_checked_ts_:
+            if last_checked_ts_:
+                self.last_checked_ts[idx] = last_checked_ts_
+            else:
                 self.last_checked_ts[idx] = "1900-01-01 00:00:00"
                 self.state.set_state(state_attr_name_in_json[idx], self.last_checked_ts[idx])
-                # datetime.datetime.strptime("1900-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")
 
         self.dsn = {
             "dbname": config.POSTGRES_DB,
@@ -81,3 +82,30 @@ class PostgresDBOperator:
         ))
 
         return result
+
+    @backoff.on_exception(backoff.expo, (psycopg.OperationalError, ConnectionError), max_tries=5)
+    def get_films_enriched(self, film_ids: list):
+        with (closing(psycopg.connect(**self.dsn, row_factory=dict_row, cursor_factory=ClientCursor)) as pg_conn,
+              pg_conn.cursor() as cursor):
+            cursor.execute(
+                """
+                SELECT
+                    fw.id AS fw_id,
+                    fw.title,
+                    fw.description,
+                    fw.rating,
+                    pfw.role,
+                    p.id AS person_id,
+                    p.full_name,
+                    g.id AS genre_id,
+                    g.name AS genre_name
+                FROM content.film_work fw
+                LEFT JOIN content.person_film_work pfw ON pfw.film_work_id = fw.id
+                LEFT JOIN content.person p ON p.id = pfw.person_id
+                LEFT JOIN content.genre_film_work gfw ON gfw.film_work_id = fw.id
+                LEFT JOIN content.genre g ON g.id = gfw.genre_id
+                WHERE fw.id = ANY(%(film_ids)s)
+                """,
+                {'film_ids': film_ids},
+            )
+            return cursor.fetchall()

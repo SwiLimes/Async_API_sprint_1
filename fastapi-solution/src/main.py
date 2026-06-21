@@ -23,8 +23,7 @@ async def startup():
     elastic.es = AsyncElasticsearch(
         hosts=[f'http://{config.ELASTIC_HOST}:{config.ELASTIC_PORT}']
     )
-    # ETL entry point
-    await etl_process(redis.redis, elastic.es)
+    asyncio.create_task(etl_process(elastic.es))
 
 
 @app.on_event('shutdown')

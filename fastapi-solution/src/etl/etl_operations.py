@@ -1,36 +1,49 @@
 import asyncio
+import json
 import logging
 
+from elasticsearch import AsyncElasticsearch
+
+from etl.elasticsearch_loader import ElasticsearchLoader
+from etl.transformer import Transformer
 from etl.postgres_db_operator import PostgresDBOperator
-
-from elasticsearch import AsyncElasticsearch, NotFoundError
-from fastapi import Depends
-from redis.asyncio import Redis
-
 from etl.indices_info import active_indices, schemas, index_attr_list
 
-async def etl_process(redis: Redis, elastic: AsyncElasticsearch):
+
+async def etl_process(elastic: AsyncElasticsearch):
     logging.info('Start')
 
     postgres_operator = PostgresDBOperator()
+    transformer = Transformer()
+    movies_loader = ElasticsearchLoader(elastic=elastic, index_name='movies')
 
     for index in active_indices:
         await create_index(elastic=elastic, index_name=index, schema=schemas[index])
+
+    for index in active_indices:
+        count = (await elastic.count(index=index))['count']
+        if count == 0:
+            postgres_operator.reset_index_state(index)
+            logging.info(f'Reset ETL state for empty index {index}')
 
     logging.info("Set schema complete")
 
     while True:
         for index in active_indices:
-            # получаем список изменений из БД
             pg_changes = postgres_operator.get_changes(index)
             if pg_changes:
-                # преобразовываем изменения из БД в список обновлений для ES
-                data_transformed = create_operations_list(data=pg_changes,
-                                                          index_name=index,
-                                                          index_attr_list=index_attr_list[index])
-                # отправляем обновления в ES
-                await add_data(elastic=elastic, index_name=index, data=data_transformed)
-                # logging.info("Got new pack from db")
+                if index == 'movies':
+                    film_ids = [row['id'] for row in pg_changes]
+                    rows = postgres_operator.get_films_enriched(film_ids)
+                    docs = transformer.transform(rows)
+                    await movies_loader.load(docs)
+                else:
+                    data_transformed = create_operations_list(
+                        data=pg_changes,
+                        index_name=index,
+                        index_attr_list=index_attr_list[index],
+                    )
+                    await add_data(elastic=elastic, index_name=index, data=data_transformed)
                 await asyncio.sleep(1)
             else:
                 logging.info(f"Nothing to update for index {index}")
@@ -39,7 +52,7 @@ async def etl_process(redis: Redis, elastic: AsyncElasticsearch):
 
 async def create_index(elastic: AsyncElasticsearch, index_name: str, schema: str) -> None:
     if not await elastic.indices.exists(index=index_name):
-        response = await elastic.indices.create(index=index_name, body=schema)
+        response = await elastic.indices.create(index=index_name, body=json.loads(schema))
         logging.info(f"Index created: {response['acknowledged']}")
     else:
         logging.info(f"Index {index_name} already exists")

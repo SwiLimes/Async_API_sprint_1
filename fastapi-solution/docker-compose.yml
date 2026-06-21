@@ -47,6 +47,12 @@ services:
       - theatre-db-data:/var/lib/postgresql/data
     expose:
       - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d theatre && psql -U postgres -d theatre -tAc 'SELECT 1 FROM content.film_work LIMIT 1' | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
   api:
     build: .
@@ -56,6 +62,7 @@ services:
       REDIS_HOST: redis
       ELASTIC_HOST: elasticsearch
       ELASTIC_PORT: 9200
+      POSTGRES_HOST: theatre-db
     ports:
       - "8000:8000"
     depends_on:
@@ -63,14 +70,17 @@ services:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
+      theatre-db:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - movies
     volumes:
-      - ./src/etl/state:/opt/etl/state
+      - etl-state:/opt/etl/state
 
 volumes:
   theatre-db-data:
+  etl-state:
 
 networks:
   movies:

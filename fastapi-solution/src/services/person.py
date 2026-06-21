@@ -1,11 +1,16 @@
+import json
 from functools import lru_cache
 from typing import Any, Dict, Optional
 
 from elasticsearch import AsyncElasticsearch, NotFoundError
 from fastapi import Depends
+from redis.asyncio import Redis
 
 from db.elastic import get_elastic
+from db.redis import get_redis
 from models.person import Person
+
+PERSON_CACHE_EXPIRE_IN_SECONDS = 60 * 5
 
 
 def _build_person_query(
@@ -38,15 +43,18 @@ def _build_person_query(
 
 
 class PersonService:
-    def __init__(self, elastic: AsyncElasticsearch):
+    def __init__(self, redis: Redis, elastic: AsyncElasticsearch):
+        self.redis = redis
         self.elastic = elastic
 
     async def get_by_id(self, person_id: str) -> Optional[Person]:
-        try:
-            doc = await self.elastic.get(index='persons', id=person_id)
-        except NotFoundError:
-            return None
-        return self._make_person(doc['_source'], doc['_id'])
+        person = await self._person_from_cache(person_id)
+        if not person:
+            person = await self._get_person_from_elastic(person_id)
+            if not person:
+                return None
+            await self._put_person_to_cache(person_id, person)
+        return person
 
     async def get_list(
             self,
@@ -56,6 +64,11 @@ class PersonService:
             page_size: int = 50,
             offset: int = 0,
     ) -> Dict[str, Any]:
+        cache_key = f'persons:list:{query}:{role}:{sort}:{page_size}:{offset}'
+        cached = await self._list_from_cache(cache_key)
+        if cached is not None:
+            return cached
+
         body = _build_person_query(
             query=query,
             role=role,
@@ -69,34 +82,58 @@ class PersonService:
             self._make_person(hit['_source'], hit['_id'])
             for hit in response['hits']['hits']
         ]
-        return {'items': items, 'total': total}
+        result = {'items': items, 'total': total}
+        await self._put_list_to_cache(cache_key, result)
+        return result
+
+    async def _get_person_from_elastic(self, person_id: str) -> Optional[Person]:
+        try:
+            doc = await self.elastic.get(index='persons', id=person_id)
+        except NotFoundError:
+            return None
+        return self._make_person(doc['_source'], doc['_id'])
+
+    async def _person_from_cache(self, person_id: str) -> Optional[Person]:
+        data = await self.redis.get(person_id)
+        if not data:
+            return None
+        return Person.parse_raw(data)
+
+    async def _put_person_to_cache(self, person_id: str, person: Person) -> None:
+        await self.redis.set(person_id, person.json(), ex=PERSON_CACHE_EXPIRE_IN_SECONDS)
+
+    async def _list_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        data = await self.redis.get(cache_key)
+        if not data:
+            return None
+        parsed = json.loads(data)
+        return {
+            'items': [Person(**item) for item in parsed['items']],
+            'total': parsed['total'],
+        }
+
+    async def _put_list_to_cache(self, cache_key: str, result: Dict[str, Any]) -> None:
+        if result['total'] == 0:
+            return
+        payload = {
+            'items': [person.dict(by_alias=True) for person in result['items']],
+            'total': result['total'],
+        }
+        await self.redis.set(cache_key, json.dumps(payload), ex=PERSON_CACHE_EXPIRE_IN_SECONDS)
 
     def _make_person(self, source: dict, document_id: str) -> Person:
         data = dict(source)
         data['uuid'] = data.get('uuid') or data.get('id') or document_id
-        films = data.get('films') or []
-
-        # Некоторые ETL складывают роли и фильмы внутрь films, а API удобнее отдавать плоско.
-        if films and not data.get('film_ids'):
-            data['film_ids'] = [
-                film_id
-                for film in films
-                if (film_id := film.get('uuid') or film.get('id'))
-            ]
-        if films and not data.get('roles'):
-            data['roles'] = sorted(
-                {
-                    role
-                    for film in films
-                    for role in film.get('roles', [])
-                }
-            )
-
+        if 'roles' not in data:
+            data['roles'] = []
+        if 'film_ids' not in data:
+            data['film_ids'] = []
         return Person(**data)
 
 
 @lru_cache()
 def get_person_service(
+        redis: Redis = Depends(get_redis),
         elastic: AsyncElasticsearch = Depends(get_elastic),
 ) -> PersonService:
-    return PersonService(elastic)
+    return PersonService(redis, elastic)

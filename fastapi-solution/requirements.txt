@@ -1,3 +1,8 @@
 fastapi==0.112.0
 elasticsearch[async]==8.13.2
 redis==5.0.4
+uvicorn[standard]==0.34.0
+orjson==3.10.4
+backoff==2.2.1
+psycopg==3.3.4
+psycopg[binary]==3.3.4

@@ -1,0 +1,134 @@
+{
+  "info": {
+    "_postman_id": "b277a37f-0d58-4363-a6ee-1031508d7207",
+    "name": "ETLTestsGenresAndPersons",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "55714973",
+    "_collection_link": "https://go.postman.co/collection/55714973-b277a37f-0d58-4363-a6ee-1031508d7207?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "Проверка количества элементов для genres",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Success answer\", function() {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Compare number of records\", function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData['hits']['total']['value']).to.equal(26);",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/genres/_search",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "genres",
+            "_search"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Проверка количества элементов для persons",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Success answer\", function() {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Compare number of records\", function() {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData['hits']['total']['value']).to.equal(4166);",
+              "});"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/persons/_search",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "persons",
+            "_search"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": ""
+    }
+  ]
+}

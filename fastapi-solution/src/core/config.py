@@ -1,24 +1,30 @@
 import os
 from logging import config as logging_config
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 from core.logger import LOGGING
 
 logging_config.dictConfig(LOGGING)
 
-PROJECT_NAME = os.getenv('PROJECT_NAME', 'movies')
 
-REDIS_HOST = os.getenv('REDIS_HOST', '127.0.0.1')
-REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')
 
-ELASTIC_HOST = os.getenv('ELASTIC_HOST', '127.0.0.1')
-ELASTIC_PORT = int(os.getenv('ELASTIC_PORT', '9200'))
+    project_name: str = Field(default='movies', alias='PROJECT_NAME')
+    redis_host: str = Field(default='127.0.0.1', alias='REDIS_HOST')
+    redis_port: str = Field(default='6379', alias='REDIS_PORT')
+    elastic_host: str = Field(default='127.0.0.1', alias='ELASTIC_HOST')
+    elastic_port: int = Field(default=9200, alias='ELASTIC_PORT')
+    postgres_user: str = Field(default='postgres', alias='POSTGRES_USER')
+    postgres_password: str = Field(default='secret', alias='POSTGRES_PASSWORD')
+    postgres_db: str = Field(default='theatre', alias='POSTGRES_DB')
+    postgres_host: str = Field(default='127.0.0.1', alias='POSTGRES_HOST')
+    postgres_port: str = Field(default='5432', alias='POSTGRES_PORT')
+    postgres_file_path: str = Field(default='database_dump.sql', alias='POSTGRES_FILE_PATH')
+    state_file_path: str = Field(default='/opt/etl/state/state.json', alias='STATE_FILEPATH')
 
-POSTGRES_USER = os.getenv('POSTGRES_USER', 'postgres')
-POSTGRES_PASSWORD = os.getenv('POSTGRES_PASSWORD', 'secret')
-POSTGRES_DB = os.getenv('POSTGRES_DB', 'theatre')
-POSTGRES_HOST = os.getenv('POSTGRES_HOST', '127.0.0.1')
-POSTGRES_PORT = os.getenv('POSTGRES_PORT', '5432')
-POSTGRES_FILE_PATH = os.getenv('POSTGRES_FILE_PATH', 'database_dump.sql')
-STATE_FILEPATH = os.getenv('STATE_FILEPATH', '/opt/etl/state/state.json')
+
+settings = Settings()
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

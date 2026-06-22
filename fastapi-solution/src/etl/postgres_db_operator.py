@@ -2,7 +2,7 @@ import logging
 
 import backoff
 from etl.etl_state import State, JsonFileStorage
-from core import config
+from core.config import settings
 from etl.indices_info import active_indices, pg_extract_queries, state_attr_name_in_json
 
 import os
@@ -18,7 +18,7 @@ class PostgresDBOperator:
         параметры подключения извлекаются из переменных среды
     """
     def __init__(self):
-        self.state = State(JsonFileStorage(file_path=config.STATE_FILEPATH))
+        self.state = State(JsonFileStorage(file_path=settings.state_file_path))
 
         # проверяем, на каком времени остановились в прошлый раз при загрузке данных в ES
         self.last_checked_ts = {idx: "1900-01-01 00:00:00" for idx in active_indices}
@@ -32,11 +32,11 @@ class PostgresDBOperator:
                 self.state.set_state(state_attr_name_in_json[idx], self.last_checked_ts[idx])
 
         self.dsn = {
-            "dbname": config.POSTGRES_DB,
-            "user": config.POSTGRES_USER,
-            "password": config.POSTGRES_PASSWORD,
-            "host": config.POSTGRES_HOST,
-            "port": config.POSTGRES_PORT,
+            "dbname": settings.postgres_db,
+            "user": settings.postgres_user,
+            "password": settings.postgres_password,
+            "host": settings.postgres_host,
+            "port": settings.postgres_port,
             "options": "-c search_path=content",
         }
 

@@ -6,3 +6,4 @@ orjson==3.10.4
 backoff==2.2.1
 psycopg==3.3.4
 psycopg[binary]==3.3.4
+pydantic-settings==2.14.2

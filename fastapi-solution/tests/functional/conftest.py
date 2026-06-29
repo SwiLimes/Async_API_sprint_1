@@ -39,21 +39,27 @@ async def es_write_data(es_client):
     return inner
 
 
+@pytest_asyncio.fixture(name='aiohttp_session', scope='session')
+async def aiohttp_session():
+    session = aiohttp.ClientSession()
+    yield session
+    await session.close()
+
+
 @pytest_asyncio.fixture(name='make_get_request')
-async def make_get_request():
+async def make_get_request(aiohttp_session):
     async def inner(endpoint: str, params: dict = None):
-        async with aiohttp.ClientSession() as session:
-            url = test_settings.service_url + endpoint
-            async with session.get(url, params=params) as response:
-                try:
-                    body = await response.json()
-                except aiohttp.ContentTypeError:
-                    body = None
-                return {
-                    'body': body,
-                    'headers': response.headers,
-                    'status': response.status
-                }
+        url = test_settings.service_url + endpoint
+        async with aiohttp_session.get(url, params=params) as response:
+            try:
+                body = await response.json()
+            except aiohttp.ContentTypeError:
+                body = None
+            return {
+                'body': body,
+                'headers': response.headers,
+                'status': response.status
+            }
 
     return inner
 

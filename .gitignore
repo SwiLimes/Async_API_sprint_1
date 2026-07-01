@@ -5,3 +5,4 @@ __pycache__/
 .env
 .idea/
 state.json
+.pytest_cache/

@@ -37,3 +37,16 @@ MAPPING_MOVIES = {
         }
     }
 }
+
+MAPPING_GENRES = {
+    "body": {
+        "mappings": {
+            "dynamic": "strict",
+            "properties": {
+                "id": {"type": "keyword"},
+                "name": {"type": "keyword"},
+                "description": {"type": "text"}
+            }
+        }
+    }
+}

@@ -22,3 +22,5 @@ POSTGRES_FILE_PATH = os.getenv('POSTGRES_FILE_PATH', 'database_dump.sql')
 STATE_FILEPATH = os.getenv('STATE_FILEPATH', '/opt/etl/state/state.json')
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+CACHE_EXPIRE_IN_SECONDS = int(os.getenv('CACHE_EXPIRE_IN_SECONDS', 300))

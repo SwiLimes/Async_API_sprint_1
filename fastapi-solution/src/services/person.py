@@ -1,4 +1,3 @@
-import json
 from functools import lru_cache
 from typing import Any, Dict, Optional
 
@@ -9,8 +8,7 @@ from redis.asyncio import Redis
 from db.elastic import get_elastic
 from db.redis import get_redis
 from models.person import Person
-
-PERSON_CACHE_EXPIRE_IN_SECONDS = 60 * 5
+from core.cache import Cache
 
 
 def _build_person_query(
@@ -44,16 +42,20 @@ def _build_person_query(
 
 class PersonService:
     def __init__(self, redis: Redis, elastic: AsyncElasticsearch):
-        self.redis = redis
         self.elastic = elastic
-
+        self.cache = Cache(redis)
+        
     async def get_by_id(self, person_id: str) -> Optional[Person]:
-        person = await self._person_from_cache(person_id)
+        person = await self.cache.get_valid_model(
+            self.elastic, index='persons', entity_id=person_id, model=Person
+        )
+        if person:
+            return person
+
+        person = await self._get_person_from_elastic(person_id)
         if not person:
-            person = await self._get_person_from_elastic(person_id)
-            if not person:
-                return None
-            await self._put_person_to_cache(person_id, person)
+            return None
+        await self.cache.set_model(person_id, person)
         return person
 
     async def get_list(
@@ -65,7 +67,9 @@ class PersonService:
             offset: int = 0,
     ) -> Dict[str, Any]:
         cache_key = f'persons:list:{query}:{role}:{sort}:{page_size}:{offset}'
-        cached = await self._list_from_cache(cache_key)
+        cached = await self.cache.get_valid_list(
+            self.elastic, index='persons', cache_key=cache_key, model=Person
+        )
         if cached is not None:
             return cached
 
@@ -83,7 +87,7 @@ class PersonService:
             for hit in response['hits']['hits']
         ]
         result = {'items': items, 'total': total}
-        await self._put_list_to_cache(cache_key, result)
+        await self.cache.set_list(cache_key, result)
         return result
 
     async def _get_person_from_elastic(self, person_id: str) -> Optional[Person]:
@@ -92,34 +96,6 @@ class PersonService:
         except NotFoundError:
             return None
         return self._make_person(doc['_source'], doc['_id'])
-
-    async def _person_from_cache(self, person_id: str) -> Optional[Person]:
-        data = await self.redis.get(person_id)
-        if not data:
-            return None
-        return Person.parse_raw(data)
-
-    async def _put_person_to_cache(self, person_id: str, person: Person) -> None:
-        await self.redis.set(person_id, person.json(), ex=PERSON_CACHE_EXPIRE_IN_SECONDS)
-
-    async def _list_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
-        data = await self.redis.get(cache_key)
-        if not data:
-            return None
-        parsed = json.loads(data)
-        return {
-            'items': [Person(**item) for item in parsed['items']],
-            'total': parsed['total'],
-        }
-
-    async def _put_list_to_cache(self, cache_key: str, result: Dict[str, Any]) -> None:
-        if result['total'] == 0:
-            return
-        payload = {
-            'items': [person.dict(by_alias=True) for person in result['items']],
-            'total': result['total'],
-        }
-        await self.redis.set(cache_key, json.dumps(payload), ex=PERSON_CACHE_EXPIRE_IN_SECONDS)
 
     def _make_person(self, source: dict, document_id: str) -> Person:
         data = dict(source)

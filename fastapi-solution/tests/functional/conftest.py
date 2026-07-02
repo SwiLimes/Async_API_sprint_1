@@ -67,3 +67,10 @@ async def redis_client():
     )
     yield client
     await client.close()
+
+
+@pytest_asyncio.fixture(name='clear_redis', autouse=True)
+async def clear_redis(redis_client):
+    await redis_client.flushdb()
+    yield
+    await redis_client.flushdb()

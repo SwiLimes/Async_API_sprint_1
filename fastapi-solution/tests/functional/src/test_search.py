@@ -3,56 +3,197 @@ import uuid
 
 import pytest
 
-@pytest.mark.parametrize(
-    'query_data, expected_answer',
-    [
-        (
-                {'query': 'The Star'},
-                {'status': 200, 'length': 50}
-        ),
-        (
-                {'query': 'Mashed potato'},
-                {'status': 200, 'length': 0}
+
+def make_movie_doc(title: str, description: str = 'Some description', rating: float = 8.0) -> dict:
+    film_id = str(uuid.uuid4())
+    return {
+        "_index": "movies",
+        "_id": film_id,
+        "_source": {
+            'id': film_id,
+            'imdb_rating': rating,
+            'genre': [
+                {'id': str(uuid.uuid4()), 'name': 'Action'},
+            ],
+            'title': title,
+            'description': description,
+            'actors': [],
+            'writers': [],
+            'directors': [],
+            'actors_names': [],
+            'writers_names': [],
+            'directors_names': [],
+            'created_at': datetime.datetime.now().isoformat(),
+            'updated_at': datetime.datetime.now().isoformat(),
+            'film_work_type': 'movie',
+        },
+    }
+
+
+def make_movies_bulk(count: int, title_prefix: str) -> list[dict]:
+    return [
+        make_movie_doc(
+            title=f"{title_prefix} {index}",
+            rating=10 - index / 10,
         )
+        for index in range(count)
     ]
+
+
+@pytest.mark.parametrize(
+    'params',
+    [
+        {},
+        {'query': ''},
+        {'query': 'star', 'page_number': 0},
+        {'query': 'star', 'page_number': -1},
+        {'query': 'star', 'page_number': 'abc'},
+        {'query': 'star', 'page_size': 0},
+        {'query': 'star', 'page_size': -1},
+        {'query': 'star', 'page_size': 101},
+        {'query': 'star', 'page_size': 'abc'},
+    ],
 )
+
+
 @pytest.mark.asyncio
-async def test_search(make_get_request, es_write_data, query_data, expected_answer):
-    # 1. Генерируем данные для ES
-    es_data = [{
-        'id': str(uuid.uuid4()),
-        'imdb_rating': 8.5,
-        'genre': [
-            {'id': '3d8d9bf5-0d90-4353-88ba-4ccc5d2c07ff', 'name': 'Action'},
-            {'id': '6d141ad2-d407-4252-bda4-95590aaf062a', 'name': 'Sci-Fi'}
-        ],
-        'title': 'The Star',
-        'description': 'New World',
-        'director': ['Stan'],
-        'actors_names': ['Ann', 'Bob'],
-        'writers_names': ['Ben', 'Howard'],
-        'actors': [
-            {'id': 'ef86b8ff-3c82-4d31-ad8e-72b69f4e3f95', 'name': 'Ann'},
-            {'id': 'fb111f22-121e-44a7-b78f-b19191810fbf', 'name': 'Bob'}
-        ],
-        'writers': [
-            {'id': 'caf76c67-c0fe-477e-8766-3ab3ff2574b5', 'name': 'Ben'},
-            {'id': 'b45bd7bc-2e16-46d5-b125-983d356768c6', 'name': 'Howard'}
-        ],
-        'created_at': datetime.datetime.now().isoformat(),
-        'updated_at': datetime.datetime.now().isoformat(),
-        'film_work_type': 'movie'
-    } for _ in range(60)]
+async def test_search_validation_errors(make_get_request, params):
+    response = await make_get_request('/api/v1/films/search', params=params)
+    assert response['status'] == 422
 
-    bulk_query: list[dict] = []
-    for row in es_data:
-        data = {'_index': 'movies', '_id': row['id']}
-        data.update({'_source': row})
-        bulk_query.append(data)
 
-    await es_write_data(bulk_query)
+@pytest.mark.parametrize(
+    'params',
+    [
+        {'query': 'S'},
+        {'query': 'star', 'page_number': 1},
+        {'query': 'star', 'page_size': 1},
+        {'query': 'star', 'page_size': 100},
+    ],
+)
 
-    response = await make_get_request('/api/v1/films/search', params=query_data)
+@pytest.mark.asyncio
+async def test_search_validation_valid_boundaries(make_get_request, es_write_data, params):
+    await es_write_data([
+        make_movie_doc(title='Star Movie'),
+    ])
 
-    assert response['status'] == expected_answer['status']
-    assert len(response['body']['items']) == expected_answer['length']
+    response = await make_get_request('/api/v1/films/search', params=params)
+    assert response['status'] == 200
+
+
+@pytest.mark.asyncio
+async def test_search_returns_only_requested_number_of_records(make_get_request, es_write_data):
+    await es_write_data(make_movies_bulk(count=10, title_prefix='Star Movie'))
+
+    response = await make_get_request(
+        '/api/v1/films/search',
+        params={'query': 'Star', 'page_size': 3},
+    )
+
+    assert response['status'] == 200
+    assert response['body']['total'] == 10
+    assert len(response['body']['items']) == 3
+    assert response['body']['page_number'] == 1
+    assert response['body']['page_size'] == 3
+
+
+@pytest.mark.asyncio
+async def test_search_uses_page_number_and_page_size(make_get_request, es_write_data):
+    await es_write_data([
+        make_movie_doc(title='Star Movie 1', rating=9.9),
+        make_movie_doc(title='Star Movie 2', rating=9.8),
+        make_movie_doc(title='Star Movie 3', rating=9.7),
+        make_movie_doc(title='Star Movie 4', rating=9.6),
+        make_movie_doc(title='Star Movie 5', rating=9.5),
+    ])
+
+    response = await make_get_request(
+        '/api/v1/films/search',
+        params={'query': 'Star', 'page_number': 2, 'page_size': 2},
+    )
+
+    assert response['status'] == 200
+    assert response['body']['total'] == 5
+    assert response['body']['page_number'] == 2
+    assert response['body']['page_size'] == 2
+    assert len(response['body']['items']) == 2
+    assert response['body']['items'][0]['title'] == 'Star Movie 3'
+    assert response['body']['items'][1]['title'] == 'Star Movie 4'
+
+
+@pytest.mark.asyncio
+async def test_search_finds_movie_by_phrase_in_title(make_get_request, es_write_data):
+    await es_write_data([
+        make_movie_doc(title='The Silver Comet', description='Space story'),
+        make_movie_doc(title='Another Movie', description='No matching words here'),
+    ])
+
+    response = await make_get_request(
+        '/api/v1/films/search',
+        params={'query': 'Silver Comet'},
+    )
+
+    assert response['status'] == 200
+    assert response['body']['total'] == 1
+    assert len(response['body']['items']) == 1
+    assert response['body']['items'][0]['title'] == 'The Silver Comet'
+
+
+@pytest.mark.asyncio
+async def test_search_finds_movie_by_phrase_in_description(make_get_request, es_write_data):
+    await es_write_data([
+        make_movie_doc(title='Unknown Title', description='A movie about distant galaxy travel'),
+        make_movie_doc(title='Another Movie', description='No matching words here'),
+    ])
+
+    response = await make_get_request(
+        '/api/v1/films/search',
+        params={'query': 'distant galaxy'},
+    )
+
+    assert response['status'] == 200
+    assert response['body']['total'] == 1
+    assert response['body']['items'][0]['title'] == 'Unknown Title'
+
+
+@pytest.mark.asyncio
+async def test_search_returns_empty_list_when_nothing_found(make_get_request, es_write_data):
+    await es_write_data([
+        make_movie_doc(title='Star Movie'),
+    ])
+
+    response = await make_get_request(
+        '/api/v1/films/search',
+        params={'query': 'Mashed Potato'},
+    )
+
+    assert response['status'] == 200
+    assert response['body']['total'] == 0
+    assert response['body']['items'] == []
+
+
+@pytest.mark.asyncio
+async def test_search_uses_redis_cache(make_get_request, es_write_data, redis_client):
+    params = {'query': 'Cached Star', 'page_size': 2}
+    cache_key = 'films:search:Cached Star:2:0'
+
+    await es_write_data([
+        make_movie_doc(title='Cached Star One', rating=9.0),
+        make_movie_doc(title='Cached Star Two', rating=8.0),
+    ])
+
+    first_response = await make_get_request('/api/v1/films/search', params=params)
+
+    assert first_response['status'] == 200
+    assert first_response['body']['total'] == 2
+    assert await redis_client.get(cache_key) is not None
+
+    await es_write_data([
+        make_movie_doc(title='Cached Star Changed', rating=10.0),
+    ])
+
+    second_response = await make_get_request('/api/v1/films/search', params=params)
+
+    assert second_response['status'] == 200
+    assert second_response['body'] == first_response['body']

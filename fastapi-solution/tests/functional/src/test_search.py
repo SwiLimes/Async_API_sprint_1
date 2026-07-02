@@ -3,6 +3,8 @@ import uuid
 
 import pytest
 
+from functional.settings import test_settings
+
 @pytest.mark.parametrize(
     'query_data, expected_answer',
     [
@@ -46,7 +48,7 @@ async def test_search(make_get_request, es_write_data, query_data, expected_answ
 
     bulk_query: list[dict] = []
     for row in es_data:
-        data = {'_index': 'movies', '_id': row['id']}
+        data = {'_index': test_settings.es_index, '_id': row['id']}
         data.update({'_source': row})
         bulk_query.append(data)
 

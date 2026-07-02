@@ -20,12 +20,6 @@ async def etl_process(elastic: AsyncElasticsearch):
     for index in active_indices:
         await create_index(elastic=elastic, index_name=index, schema=schemas[index])
 
-    for index in active_indices:
-        count = (await elastic.count(index=index))['count']
-        if count == 0:
-            postgres_operator.reset_index_state(index)
-            logging.info(f'Reset ETL state for empty index {index}')
-
     logging.info("Set schema complete")
 
     while True:

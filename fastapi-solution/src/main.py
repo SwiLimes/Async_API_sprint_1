@@ -1,3 +1,5 @@
+import os
+
 from elasticsearch import AsyncElasticsearch
 from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse
@@ -30,6 +32,11 @@ async def startup():
 async def shutdown():
     await redis.redis.close()
     await elastic.es.close()
+
+
+@app.get('/health')
+async def health_check():
+    return {"status": "ok"}
 
 
 # Подключаем роутеры к серверу, теги нужны для удобной навигации в документации.
